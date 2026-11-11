@@ -28,6 +28,15 @@ export const users = sqliteTable("users", {
 	createdAt: integer("created_at").notNull(),
 });
 
+export const userPasswords = sqliteTable("user_passwords", {
+	userId: text("user_id")
+		.primaryKey()
+		.references(() => users.id, { onDelete: "cascade" }),
+	passwordHash: text("password_hash").notNull(),
+	sessionVersion: integer("session_version").notNull().default(1),
+	updatedAt: integer("updated_at").notNull(),
+});
+
 export const workspaceMembers = sqliteTable(
 	"workspace_members",
 	{

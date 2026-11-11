@@ -19,6 +19,7 @@ interface Props {
 
 interface MeResponse {
 	user: { id: string; email: string; name: string };
+	authMethod?: string | null;
 }
 
 const POPOVER_MARGIN = 8;
@@ -133,12 +134,14 @@ function AccountMenuPopover({
 	popoverRef,
 	pos,
 	user,
+	authMethod,
 	redirectTarget,
 }: {
 	menuId: string;
 	popoverRef: { current: HTMLDivElement | null };
 	pos: { top: number; right: number };
 	user: { email: string; name: string };
+	authMethod?: string | null;
 	redirectTarget: string;
 }) {
 	return (
@@ -154,22 +157,45 @@ function AccountMenuPopover({
 				<div class="account-menu-identity-email">{user.email}</div>
 			</div>
 			<div role="menu" aria-label="Account">
-				<a
-					role="menuitem"
-					class="account-menu-item"
-					href={`/auth/login?redirect_url=${encodeURIComponent(redirectTarget)}`}
-				>
-					Refresh session
+				<a role="menuitem" class="account-menu-item" href="/settings/account">
+					Account &amp; password
 				</a>
-				<a
-					role="menuitem"
-					class="account-menu-item"
-					href="/cdn-cgi/access/logout"
-					// PROJ-431: don't leave one user's unsent drafts on a shared device.
-					onClick={() => clearAllDrafts()}
-				>
-					Log out
-				</a>
+				{authMethod === "password" ? (
+					<button
+						type="button"
+						role="menuitem"
+						class="account-menu-item w-full text-left bg-transparent border-0 cursor-pointer font-[inherit]"
+						onClick={async () => {
+							clearAllDrafts();
+							try {
+								await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+							} finally {
+								window.location.assign("/login");
+							}
+						}}
+					>
+						Log out
+					</button>
+				) : (
+					<>
+						<a
+							role="menuitem"
+							class="account-menu-item"
+							href={`/auth/login?redirect_url=${encodeURIComponent(redirectTarget)}`}
+						>
+							Refresh session
+						</a>
+						<a
+							role="menuitem"
+							class="account-menu-item"
+							href="/cdn-cgi/access/logout"
+							// PROJ-431: don't leave one user's unsent drafts on a shared device.
+							onClick={() => clearAllDrafts()}
+						>
+							Log out
+						</a>
+					</>
+				)}
 			</div>
 			<PreferencesSection />
 		</Popover>
@@ -178,6 +204,7 @@ function AccountMenuPopover({
 
 function useAccountUser(workspaceSlug: string | undefined) {
 	const [user, setUser] = useState<{ email: string; name: string } | null>(null);
+	const [authMethod, setAuthMethod] = useState<string | null>(null);
 	const [failed, setFailed] = useState(false);
 
 	useEffect(() => {
@@ -193,6 +220,7 @@ function useAccountUser(workspaceSlug: string | undefined) {
 					return;
 				}
 				setUser({ email: data.user.email, name: data.user.name });
+				setAuthMethod(data.authMethod ?? null);
 			})
 			.catch(() => {
 				if (!cancelled) setFailed(true);
@@ -202,7 +230,7 @@ function useAccountUser(workspaceSlug: string | undefined) {
 		};
 	}, [workspaceSlug]);
 
-	return { user, failed };
+	return { user, authMethod, failed };
 }
 
 // PROJ-419-style portal: the top bar this menu lives in gets a CSS
@@ -238,7 +266,7 @@ function useCloseOnOutsideOrEscape(
 // render here — "Refresh session" and "Log out" are manual escape hatches for
 // re-challenging or ending the CF Access session (see apps/api/src/routes/auth.ts).
 export function AccountMenu({ workspaceSlug }: Props) {
-	const { user, failed } = useAccountUser(workspaceSlug);
+	const { user, authMethod, failed } = useAccountUser(workspaceSlug);
 	const [open, setOpen] = useState(false);
 	const [popoverPos, setPopoverPos] = useState<{ top: number; right: number } | null>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
@@ -273,7 +301,7 @@ export function AccountMenu({ workspaceSlug }: Props) {
 
 	if (failed) {
 		return (
-			<a href="/auth/login" class="account-menu-login">
+			<a href="/login" class="account-menu-login">
 				Log in
 			</a>
 		);
@@ -317,6 +345,7 @@ export function AccountMenu({ workspaceSlug }: Props) {
 					popoverRef={popoverRef}
 					pos={popoverPos}
 					user={user}
+					authMethod={authMethod}
 					redirectTarget={redirectTarget}
 				/>
 			)}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { apiFetch } from "../utils/api-client";
 import { resolveWorkspaceSlug } from "../utils/workspace";
 import type { ProjectLookup as ProjectLite } from "./board-utils";
+import { AddMemberPasswordPanel, useMemberPasswords } from "./MemberPasswordSection";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { EmptyState } from "./ui/EmptyState";
@@ -262,31 +263,106 @@ function MembersMobileCards(
 	props: Readonly<{
 		members: WsMember[];
 		groupsByUser: Map<string, Array<{ id: string; name: string }>>;
+		callerRole: string;
+		passwordByUser: Record<string, boolean>;
+		busy: boolean;
+		onOpenReset: (id: string, email: string) => void;
 	}>
 ) {
 	return (
 		<div class="hidden max-sm:flex max-sm:flex-col max-sm:gap-3">
-			{props.members.map((m) => (
-				<div key={m.id} class="py-3 px-4 border border-border rounded-md bg-surface">
-					<div class="font-medium text-text-base">{m.name || m.email}</div>
-					<div class="text-[0.75rem] text-text-muted mb-1">{m.email}</div>
-					<div class="text-[0.75rem] text-text-muted mb-2">Role: {m.role}</div>
-					<div>
-						<MemberGroupsCell member={m} groups={props.groupsByUser.get(m.id) ?? []} />
+			{props.members.map((m) => {
+				const canReset = m.role !== "owner" || props.callerRole === "owner";
+				return (
+					<div key={m.id} class="py-3 px-4 border border-border rounded-md bg-surface">
+						<div class="font-medium text-text-base">{m.name || m.email}</div>
+						<div class="text-[0.75rem] text-text-muted mb-1">{m.email}</div>
+						<div class="text-[0.75rem] text-text-muted mb-2">Role: {m.role}</div>
+						<div class="mb-2">
+							<MemberGroupsCell member={m} groups={props.groupsByUser.get(m.id) ?? []} />
+						</div>
+						{canReset && (
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={props.busy}
+								onClick={() => props.onOpenReset(m.id, m.email)}
+							>
+								{props.passwordByUser[m.id] ? "Reset password" : "Set password"}
+							</Button>
+						)}
 					</div>
-				</div>
-			))}
+				);
+			})}
 		</div>
 	);
 }
 
 function MembersOverview(
-	props: Readonly<{ members: WsMember[]; memberGroups: MemberGroupsRow[] }>
+	props: Readonly<{
+		slug: string;
+		callerRole: string;
+		members: WsMember[];
+		memberGroups: MemberGroupsRow[];
+		onChanged: () => Promise<void>;
+	}>
 ) {
 	const groupsByUser = new Map(props.memberGroups.map((r) => [r.userId, r.groups]));
+	const pw = useMemberPasswords(props.slug, props.onChanged);
 	return (
 		<section class={CARD}>
 			<h2 class={H2}>Members</h2>
+			<AddMemberPasswordPanel
+				callerRole={props.callerRole}
+				busy={pw.busy}
+				onCreate={pw.createUser}
+			/>
+			{pw.err && (
+				<p role="alert" class="m-0 mb-3 text-xs text-danger-text">
+					{pw.err}
+				</p>
+			)}
+			{pw.notice && (
+				<p role="status" class="m-0 mb-3 text-xs text-text-base">
+					{pw.notice}
+				</p>
+			)}
+			{pw.resetTargetId && (
+				<form
+					onSubmit={pw.saveReset}
+					class="mb-4 p-3 border border-border rounded bg-bg flex flex-wrap items-end gap-2"
+				>
+					<div class="flex-1 min-w-[200px]">
+						<label
+							htmlFor="reset-member-pw"
+							class="block mb-1 text-xs font-semibold text-text-muted"
+						>
+							New password for {pw.resetEmail}
+						</label>
+						<Input
+							id="reset-member-pw"
+							type="password"
+							required
+							placeholder="Min 8 characters"
+							value={pw.resetPw}
+							onInput={(e) => pw.setResetPw((e.target as HTMLInputElement).value)}
+							disabled={pw.busy}
+						/>
+					</div>
+					<Button type="submit" variant="primary" size="sm" disabled={pw.busy || !pw.resetPw}>
+						Save password
+					</Button>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={pw.closeReset}
+						disabled={pw.busy}
+					>
+						Cancel
+					</Button>
+				</form>
+			)}
 			<div class="overflow-x-auto max-sm:hidden">
 				<Table class="text-[0.85rem]">
 					<TableHead>
@@ -294,25 +370,54 @@ function MembersOverview(
 							<TableHeaderCell>Member</TableHeaderCell>
 							<TableHeaderCell>Workspace role</TableHeaderCell>
 							<TableHeaderCell>Groups</TableHeaderCell>
+							<TableHeaderCell>Password</TableHeaderCell>
 						</TableRow>
 					</TableHead>
 					<TableBody>
-						{props.members.map((m) => (
-							<TableRow key={m.id}>
-								<TableCell>
-									<div class="font-medium text-text-base">{m.name || m.email}</div>
-									<div class="text-[0.75rem] text-text-muted">{m.email}</div>
-								</TableCell>
-								<TableCell>{m.role}</TableCell>
-								<TableCell>
-									<MemberGroupsCell member={m} groups={groupsByUser.get(m.id) ?? []} />
-								</TableCell>
-							</TableRow>
-						))}
+						{props.members.map((m) => {
+							const hasPw = pw.passwordByUser[m.id];
+							const canReset = m.role !== "owner" || props.callerRole === "owner";
+							return (
+								<TableRow key={m.id}>
+									<TableCell>
+										<div class="font-medium text-text-base">{m.name || m.email}</div>
+										<div class="text-[0.75rem] text-text-muted">{m.email}</div>
+									</TableCell>
+									<TableCell>{m.role}</TableCell>
+									<TableCell>
+										<MemberGroupsCell member={m} groups={groupsByUser.get(m.id) ?? []} />
+									</TableCell>
+									<TableCell>
+										<div class="flex items-center gap-2">
+											{hasPw !== undefined && (
+												<span class="text-xs text-text-muted">{hasPw ? "Set" : "Not set"}</span>
+											)}
+											{canReset && (
+												<Button
+													variant="outline"
+													size="sm"
+													disabled={pw.busy}
+													onClick={() => pw.openReset(m.id, m.email)}
+												>
+													{hasPw ? "Reset" : "Set password"}
+												</Button>
+											)}
+										</div>
+									</TableCell>
+								</TableRow>
+							);
+						})}
 					</TableBody>
 				</Table>
 			</div>
-			<MembersMobileCards members={props.members} groupsByUser={groupsByUser} />
+			<MembersMobileCards
+				members={props.members}
+				groupsByUser={groupsByUser}
+				callerRole={props.callerRole}
+				passwordByUser={pw.passwordByUser}
+				busy={pw.busy}
+				onOpenReset={pw.openReset}
+			/>
 		</section>
 	);
 }
@@ -1039,7 +1144,13 @@ function GroupManagerBody(props: BodyProps) {
 
 			{isAdmin && activeTab === "members" && (
 				<div role="tabpanel" id="group-tabpanel-members" aria-labelledby="group-tab-members">
-					<MembersOverview members={data.members} memberGroups={data.memberGroups} />
+					<MembersOverview
+						slug={props.slug}
+						callerRole={data.role}
+						members={data.members}
+						memberGroups={data.memberGroups}
+						onChanged={props.refetch}
+					/>
 				</div>
 			)}
 

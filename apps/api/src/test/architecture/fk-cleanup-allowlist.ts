@@ -197,6 +197,9 @@ export const FK_CLEANUP_ALLOWLIST: Record<string, FkCleanupEntry> = {
 	"user_groups -> workspaces (CASCADE)": {
 		cleanedBy: ["services/workspaces.ts#WORKSPACE_CLEANUP_SQL"],
 	},
+	"user_passwords -> users (CASCADE)": {
+		guarded: "users are never deleted: removeMember only removes the workspace membership row",
+	},
 	"wiki_drafts -> users (CASCADE)": {
 		guarded: "users are never deleted: removeMember only removes the workspace membership row",
 	},

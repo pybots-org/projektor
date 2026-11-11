@@ -39,7 +39,7 @@ export interface MCPTool {
  * - `public`: shared PUBLIC_READ_ONLY viewer        - `oauth`: OAuth grant (connector)
  * - `pk`: workspace API token (`pk_…`)             - `pat`: personal access token
  */
-export type AuthMethod = "oauth" | "pk" | "pat" | "access" | "dev" | "public";
+export type AuthMethod = "oauth" | "pk" | "pat" | "access" | "password" | "dev" | "public";
 
 export interface AuthInfo {
 	kind: "human" | "agent";

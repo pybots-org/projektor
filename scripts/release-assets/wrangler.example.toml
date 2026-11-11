@@ -41,7 +41,7 @@ mode = "smart"
 [assets]
 directory = "./vendor/web"
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/mcp/*", "/wiki", "/.well-known/*"]
+run_worker_first = ["/api/*", "/auth/*", "/mcp/*", "/wiki", "/.well-known/*"]
 
 # ─── Cron Triggers ─────────────────────────────────────────────
 # Daily sweep for the 30-day wiki trash purge (see `scheduled` in src/index.ts).

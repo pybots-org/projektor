@@ -1,9 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import { formatIssueRef } from "../lib/issue-ref";
 import { statusDisplayName } from "../lib/status";
+import { SessionExpiredError } from "../utils/api-client";
 import { issueUrl } from "../utils/issue-url";
 import { fetchAllIssues } from "../utils/paginate";
 import { categoryColor, type Issue } from "./board-utils";
+import { SignInPrompt } from "./SignInPrompt";
 import { Switch } from "./ui/Switch";
 
 interface Props {
@@ -191,7 +193,7 @@ export default function MyIssues({ workspaceSlug }: Props) {
 				setHasLoaded(true);
 			} catch (e) {
 				if (cancelled) return;
-				setError(String(e));
+				setError(e instanceof SessionExpiredError ? "__session_expired__" : String(e));
 			} finally {
 				if (!cancelled) setLoading(false);
 			}
@@ -204,6 +206,7 @@ export default function MyIssues({ workspaceSlug }: Props) {
 	// Only the first load replaces the page; toggling "Include done" refetches in place so
 	// the checkbox stays put.
 	if (loading && !hasLoaded) return <p aria-live="polite">Loading…</p>;
+	if (error === "__session_expired__") return <SignInPrompt redirectPath="/my-issues" />;
 	if (error)
 		return (
 			<p role="alert" class="text-danger-text">

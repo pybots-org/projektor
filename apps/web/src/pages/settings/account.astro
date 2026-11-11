@@ -1,0 +1,17 @@
+---
+import Base from '../../layouts/Base.astro';
+import AccountSettings from '../../islands/AccountSettings';
+---
+<Base title="Account & Password — Projektor">
+  <div class="page-container">
+    <header style="margin-bottom: 1.5rem;">
+      <h1 style="margin: 0 0 .25rem; font-size: 1.5rem; font-weight: 700; color: var(--text);">
+        Account &amp; Password
+      </h1>
+      <p style="margin: 0; font-size: .875rem; color: var(--text-muted);">
+        Manage your profile details and password sign-in credentials.
+      </p>
+    </header>
+    <AccountSettings client:load />
+  </div>
+</Base>

@@ -1,0 +1,64 @@
+---
+import LoginForm from '../islands/LoginForm';
+import '../styles/tokens.css';
+import '../styles/global.css';
+---
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#007a87" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1fbdcb" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <title>Sign in — Projektor</title>
+    <script is:inline>
+      (function () {
+        try {
+          var raw = localStorage.getItem('prefs');
+          var t = raw ? JSON.parse(raw).theme : localStorage.getItem('theme');
+          if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
+    <style is:global>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+      }
+      .login-shell {
+        width: 100%;
+        max-width: 420px;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+      }
+      .login-brand {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.625rem;
+        text-decoration: none;
+        color: var(--text-strong);
+        font-weight: 700;
+        font-size: 1.125rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="login-shell">
+      <a href="/" class="login-brand">
+        <span class="brand-mark" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;background:var(--accent);color:var(--on-accent);font-weight:700;font-size:0.9rem;">P</span>
+        <span>Projektor</span>
+      </a>
+      <LoginForm client:load />
+    </main>
+  </body>
+</html>

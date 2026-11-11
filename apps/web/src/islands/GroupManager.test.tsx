@@ -165,4 +165,53 @@ describe("GroupManager tabs", () => {
 		fireEvent.click(screen.getByRole("tab", { name: "Members" }));
 		expect((await screen.findAllByText("Mo Member")).length).toBe(2);
 	});
+
+	it("lets an admin create or set a member password via POST /auth/users", async () => {
+		const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+			const u = String(url);
+			const json = (body: unknown) =>
+				Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+			if (u.includes("/auth/users") && init?.method === "POST") {
+				return json({
+					user: { id: "u3", email: "new@example.com", name: "New", role: "member" },
+					created: true,
+					passwordSet: true,
+				});
+			}
+			if (u.includes("/auth/users")) {
+				return json({ users: [{ ...REGULAR_MEMBER, hasPassword: true }] });
+			}
+			if (u.includes("/member-groups")) return json([]);
+			if (u.includes("/groups")) return json([GROUP]);
+			if (u.includes("/api/projects")) return json([]);
+			return json({ members: [REGULAR_MEMBER], currentUserRole: "owner" });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<GroupManager workspaceSlug="my-ws" />);
+		await screen.findAllByText("Engineering");
+		fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+		fireEvent.input(await screen.findByLabelText(/^Email/i), {
+			target: { value: "new@example.com" },
+		});
+		fireEvent.input(screen.getByLabelText(/^Initial password/i), {
+			target: { value: "StrongPassword1!" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Save user" }));
+
+		await vi.waitFor(() => {
+			const postCall = fetchMock.mock.calls.find(
+				([u, init]) =>
+					String(u).includes("/auth/users") && (init as RequestInit | undefined)?.method === "POST"
+			);
+			expect(postCall).toBeTruthy();
+			expect(JSON.parse(String((postCall?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+				email: "new@example.com",
+				role: "member",
+				password: "StrongPassword1!",
+				workspaceSlug: "my-ws",
+			});
+		});
+	});
 });

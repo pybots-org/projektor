@@ -63,6 +63,8 @@ export interface Env {
 	// Independent of whether CF Access is configured. Honored truthy values
 	// (case-insensitive, whitespace-trimmed): "true", "1", "yes".
 	PUBLIC_READ_ONLY?: string;
+	/** Allow public self-service email+password sign-up ("1" / "true"). Disabled by default. */
+	ALLOW_PASSWORD_SIGNUP?: string;
 	// Optional: opt-in real-time WebSocket hub (Durable Objects). Omitted for
 	// free-tier/1-click deployments; present when opt-in real-time features are enabled.
 	WORKSPACE_HUB?: DurableObjectNamespace;

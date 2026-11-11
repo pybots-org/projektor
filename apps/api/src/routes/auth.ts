@@ -4,8 +4,11 @@ import { jsonBody } from "../http/body";
 import { serviceErrToResponse } from "../http/error-adapter";
 import { authMiddleware, requireInteractiveHuman } from "../middleware/auth";
 import { createUserToken, deleteUserToken, getUserWorkspaces } from "../services/user-tokens";
+import passwordAuthRouter from "./password-auth";
 
 const router = new Hono<HonoEnv>();
+
+router.route("/", passwordAuthRouter);
 
 function isSafeRedirectPath(url: string): boolean {
 	return url.startsWith("/") && !url.startsWith("//");
@@ -20,7 +23,7 @@ router.get("/login", (c) => {
 router.get("/me", authMiddleware, async (c) => {
 	const user = c.get("user") as { id: string; email: string; name: string };
 	const workspaces = await getUserWorkspaces({ db: c.env.DB, userId: user.id });
-	return c.json({ user, workspaces });
+	return c.json({ user, workspaces, authMethod: c.get("auth")?.method ?? null });
 });
 
 // PROJ-903: personal access tokens are minted and revoked only from an interactive

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useAccessGate } from "../utils/access-gate";
-import { apiFetch } from "../utils/api-client";
+import { apiFetch, SessionExpiredError } from "../utils/api-client";
 import { usePublicViewer } from "../utils/public-viewer";
 import AccessPending from "./AccessPending";
+import { SignInPrompt } from "./SignInPrompt";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { EmptyState } from "./ui/EmptyState";
@@ -287,17 +288,25 @@ function ProjectGrid({ projects }: { projects: Project[] }) {
 export default function ProjectList({ workspaceSlug }: { workspaceSlug?: string }) {
 	const [projects, setProjects] = useState<Project[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [unauthenticated, setUnauthenticated] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showArchived, setShowArchived] = useState(false);
 
 	useEffect(() => {
 		setLoading(true);
+		setUnauthenticated(false);
 		setError(null);
 
 		const path = showArchived ? "/api/projects?includeArchived=true" : "/api/projects";
 		apiFetch<Project[]>(path, { workspaceSlug })
 			.then((data) => setProjects(Array.isArray(data) ? data : []))
-			.catch((e) => setError(String(e)))
+			.catch((e) => {
+				if (e instanceof SessionExpiredError) {
+					setUnauthenticated(true);
+				} else {
+					setError(String(e));
+				}
+			})
 			.finally(() => setLoading(false));
 	}, [workspaceSlug, showArchived]);
 
@@ -310,6 +319,7 @@ export default function ProjectList({ workspaceSlug }: { workspaceSlug?: string 
 
 	if (gate.pending) return <AccessPending />;
 	if (loading) return <p aria-live="polite">Loading projects…</p>;
+	if (unauthenticated) return <SignInPrompt />;
 	if (error)
 		return (
 			<p role="alert" class="text-red-600">

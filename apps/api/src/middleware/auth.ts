@@ -2,6 +2,7 @@ import type { Env, HonoEnv } from "@projektor/types";
 import type { Context, Next } from "hono";
 import { z } from "zod";
 import { unauthorizedChallenge } from "../auth/challenge";
+import { getSessionUserById } from "../auth/password-store";
 import type { Capability } from "../auth/scopes";
 import {
 	capabilityForMethod,
@@ -9,6 +10,7 @@ import {
 	parseScopes,
 	tokenAllows,
 } from "../auth/scopes";
+import { SESSION_COOKIE_NAME, verifySessionToken } from "../auth/session";
 import { setBounded } from "../lib/bounded-map";
 import { ensureUserProvisioned, provisionPublicViewer } from "../services/provisioning";
 import { bumpRateCounter, tokenHashFor } from "./rate-limit";
@@ -355,14 +357,40 @@ function withMcpAuthChallenge(c: Context<HonoEnv>, response: Response): Response
 	return response;
 }
 
+export async function provisionUser(env: Env, user: { id: string; email: string }): Promise<void> {
+	await ensureUserProvisioned(env, user);
+}
+
+async function tryPasswordSessionAuth(c: Context<HonoEnv>): Promise<AuthOutcome> {
+	if (!c.env.JWT_SECRET) return { kind: "skip" };
+	const token = parseCookie(c.req.header("cookie") ?? "", SESSION_COOKIE_NAME);
+	if (!token) return { kind: "skip" };
+
+	const payload = await verifySessionToken(c.env.JWT_SECRET, token);
+	if (!payload) return { kind: "skip" };
+
+	const sessionUser = await getSessionUserById(c.env.DB, payload.sub);
+	if (!sessionUser || sessionUser.sessionVersion !== payload.v) {
+		return { kind: "skip" };
+	}
+
+	const user: AuthUser = { id: sessionUser.id, email: sessionUser.email, name: sessionUser.name };
+	await ensureUserProvisioned(c.env, user);
+	c.set("user", user);
+	c.set("authKind", "human");
+	c.set("auth", { kind: "human", method: "password" });
+	return { kind: "allow" };
+}
+
 export async function authMiddleware(c: Context<HonoEnv>, next: Next) {
-	// tryPublicViewerAuth is last: a real CF Access session, bearer token, or dev
-	// bypass always wins so a logged-in user is never demoted to the anonymous
-	// viewer just because PUBLIC_READ_ONLY happens to be on too.
+	// tryPublicViewerAuth is last: a real CF Access session, bearer token, password
+	// session, or dev bypass always wins so a logged-in user is never demoted to the
+	// anonymous viewer just because PUBLIC_READ_ONLY happens to be on too.
 	for (const attempt of [
 		tryOAuthGrantAuth,
 		tryCfAccessAuth,
 		tryBearerTokenAuth,
+		tryPasswordSessionAuth,
 		tryDevBypassAuth,
 		tryPublicViewerAuth,
 	]) {

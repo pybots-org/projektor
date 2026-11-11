@@ -36,8 +36,62 @@ describe("AccountMenu — loading and error states", () => {
 		stubMeFetch({ ok: false });
 		render(<AccountMenu />);
 		const link = await screen.findByRole("link", { name: "Log in" });
-		expect(link.getAttribute("href")).toBe("/auth/login");
+		expect(link.getAttribute("href")).toBe("/login");
 		expect(screen.queryByRole("button")).toBeNull();
+	});
+});
+
+describe("AccountMenu — password session", () => {
+	it("shows Account & password link and logs out via POST /auth/logout", async () => {
+		const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+			const u = String(url);
+			if (u.includes("/auth/me")) {
+				return Promise.resolve({
+					ok: true,
+					status: 200,
+					json: () =>
+						Promise.resolve({
+							user: { id: "u1", email: "mmvarma@pybots.ai", name: "Mani Varma" },
+							workspaces: [],
+							authMethod: "password",
+						}),
+				});
+			}
+			if (u.includes("/auth/logout") && init?.method === "POST") {
+				return Promise.resolve({
+					ok: true,
+					status: 200,
+					json: () => Promise.resolve({ ok: true }),
+				});
+			}
+			return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		const assign = vi.fn();
+		const originalLocation = window.location;
+		Object.defineProperty(window, "location", {
+			configurable: true,
+			value: { ...originalLocation, assign },
+		});
+
+		try {
+			render(<AccountMenu />);
+			const trigger = await screen.findByRole("button", { name: /Account: Mani Varma/i });
+			fireEvent.click(trigger);
+
+			const accountLink = await screen.findByRole("menuitem", { name: /Account & password/i });
+			expect(accountLink.getAttribute("href")).toBe("/settings/account");
+
+			const logoutBtn = screen.getByRole("menuitem", { name: "Log out" });
+			fireEvent.click(logoutBtn);
+
+			await vi.waitFor(() => {
+				expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/auth/logout"))).toBe(true);
+				expect(assign).toHaveBeenCalledWith("/login");
+			});
+		} finally {
+			Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+		}
 	});
 });
 
