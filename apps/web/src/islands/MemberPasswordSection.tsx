@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { apiFetch } from "../utils/api-client";
 import { Button } from "./ui/Button";
 import { Field } from "./ui/Field";
@@ -12,6 +12,32 @@ interface AuthUserRow {
 	hasPassword: boolean;
 }
 
+export interface SavedCredentials {
+	id: number;
+	email: string;
+	password: string;
+	role?: string;
+	action: "created" | "reset";
+}
+
+const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*-_";
+
+/** Generate a strong random password safe to copy and share. */
+export function generateStrongPassword(length = 16): string {
+	const bytes = new Uint8Array(length);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes, (b) => PASSWORD_ALPHABET[b % PASSWORD_ALPHABET.length]).join("");
+}
+
+function getLoginUrl(): string {
+	if (typeof window === "undefined") return "/login";
+	return `${window.location.origin}/login`;
+}
+
+function formatLoginInfo(creds: SavedCredentials, loginUrl: string): string {
+	return `URL: ${loginUrl}\nEmail: ${creds.email}\nPassword: ${creds.password}`;
+}
+
 const SELECT_CLASS =
 	"w-full px-[0.625rem] py-[0.4rem] border border-border rounded text-[0.875rem] bg-bg text-text-base font-[inherit]";
 
@@ -23,6 +49,8 @@ export function useMemberPasswords(slug: string, onChanged: () => Promise<void>)
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
+	const [savedCredentials, setSavedCredentials] = useState<SavedCredentials | null>(null);
+	const credSeqRef = useRef(0);
 
 	const loadUsers = useCallback(async () => {
 		try {
@@ -44,14 +72,18 @@ export function useMemberPasswords(slug: string, onChanged: () => Promise<void>)
 		void loadUsers();
 	}, [loadUsers]);
 
-	async function setMemberPassword(payload: {
-		email: string;
-		name?: string;
-		role?: string;
-		password: string;
-	}) {
+	async function setMemberPassword(
+		payload: {
+			email: string;
+			name?: string;
+			role?: string;
+			password: string;
+		},
+		action: "created" | "reset"
+	) {
 		setErr(null);
 		setNotice(null);
+		setSavedCredentials(null);
 		if (payload.password.length < 8) {
 			setErr("Password must be at least 8 characters.");
 			return false;
@@ -64,7 +96,15 @@ export function useMemberPasswords(slug: string, onChanged: () => Promise<void>)
 				body: { ...payload, workspaceSlug: slug },
 			});
 			await Promise.all([loadUsers(), onChanged()]);
-			setNotice(`Saved password for ${payload.email.trim().toLowerCase()}.`);
+			const email = payload.email.trim().toLowerCase();
+			setNotice(`Saved password for ${email}.`);
+			setSavedCredentials({
+				id: ++credSeqRef.current,
+				email,
+				password: payload.password,
+				role: payload.role,
+				action,
+			});
 			return true;
 		} catch (e) {
 			setErr(e instanceof Error ? e.message : String(e));
@@ -83,6 +123,8 @@ export function useMemberPasswords(slug: string, onChanged: () => Promise<void>)
 		busy,
 		err,
 		notice,
+		savedCredentials,
+		dismissCredentials: () => setSavedCredentials(null),
 		openReset: (id: string, email: string) => {
 			setResetTargetId(id);
 			setResetEmail(email);
@@ -98,15 +140,86 @@ export function useMemberPasswords(slug: string, onChanged: () => Promise<void>)
 		saveReset: async (e: Event) => {
 			e.preventDefault();
 			if (!resetEmail) return;
-			const ok = await setMemberPassword({ email: resetEmail, password: resetPw });
+			const ok = await setMemberPassword({ email: resetEmail, password: resetPw }, "reset");
 			if (ok) {
 				setResetTargetId(null);
 				setResetEmail("");
 				setResetPw("");
 			}
 		},
-		createUser: setMemberPassword,
+		createUser: (payload: { email: string; name?: string; role: string; password: string }) =>
+			setMemberPassword(payload, "created"),
 	};
+}
+
+export function SavedCredentialsBanner({
+	credentials,
+	onDismiss,
+}: {
+	credentials: SavedCredentials;
+	onDismiss: () => void;
+}) {
+	const [copied, setCopied] = useState(false);
+	const [copyErr, setCopyErr] = useState<string | null>(null);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const loginUrl = getLoginUrl();
+
+	useEffect(() => {
+		return () => {
+			if (timerRef.current) clearTimeout(timerRef.current);
+		};
+	}, []);
+
+	async function handleCopy() {
+		setCopyErr(null);
+		try {
+			await navigator.clipboard.writeText(formatLoginInfo(credentials, loginUrl));
+			setCopied(true);
+			if (timerRef.current) clearTimeout(timerRef.current);
+			timerRef.current = setTimeout(() => setCopied(false), 2000);
+		} catch {
+			setCopyErr("Clipboard unavailable — copy details manually above.");
+		}
+	}
+
+	const heading =
+		credentials.action === "reset"
+			? "Updated login credentials"
+			: "Login credentials ready to share";
+
+	return (
+		<section aria-label={heading} class="mb-4 p-4 bg-bg border border-border rounded-md">
+			<div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+				<p class="m-0 font-semibold text-sm text-text-base">
+					{heading}: <span class="font-mono text-xs text-text-muted">{credentials.email}</span>
+					{credentials.role && (
+						<span class="ml-2 text-xs font-normal text-text-muted">({credentials.role})</span>
+					)}
+				</p>
+				<div class="flex items-center gap-2">
+					<Button type="button" variant="primary" size="sm" onClick={() => void handleCopy()}>
+						{copied ? "Copied!" : "Copy login info"}
+					</Button>
+					<Button type="button" variant="outline" size="sm" onClick={onDismiss}>
+						Dismiss
+					</Button>
+				</div>
+			</div>
+			<p class="m-0 mb-2 text-xs text-text-muted">
+				Copy and share these credentials now — the password won't be visible after dismissing.
+			</p>
+			<div class="grid gap-1 text-xs font-mono bg-surface border border-border rounded px-3 py-2 text-text-base break-all">
+				<div>URL: {loginUrl}</div>
+				<div>Email: {credentials.email}</div>
+				<div>Password: {credentials.password}</div>
+			</div>
+			{copyErr && (
+				<p role="alert" class="m-0 mt-2 text-xs text-danger-text">
+					{copyErr}
+				</p>
+			)}
+		</section>
+	);
 }
 
 export function AddMemberPasswordPanel({
@@ -127,6 +240,7 @@ export function AddMemberPasswordPanel({
 	const [name, setName] = useState("");
 	const [role, setRole] = useState("member");
 	const [password, setPassword] = useState("");
+	const [revealPassword, setRevealPassword] = useState(false);
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
@@ -142,6 +256,7 @@ export function AddMemberPasswordPanel({
 			setName("");
 			setRole("member");
 			setPassword("");
+			setRevealPassword(false);
 		}
 	}
 
@@ -188,15 +303,30 @@ export function AddMemberPasswordPanel({
 					</select>
 				</Field>
 				<Field label="Initial password" htmlFor="new-member-password" required class="m-0">
-					<Input
-						id="new-member-password"
-						type="password"
-						required
-						placeholder="Min 8 characters"
-						value={password}
-						onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
-						disabled={busy}
-					/>
+					<div class="flex items-center gap-1.5">
+						<Input
+							id="new-member-password"
+							class="flex-1 min-w-0"
+							type={revealPassword ? "text" : "password"}
+							required
+							placeholder="Min 8 characters"
+							value={password}
+							onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
+							disabled={busy}
+						/>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={busy}
+							onClick={() => {
+								setPassword(generateStrongPassword());
+								setRevealPassword(true);
+							}}
+						>
+							Generate
+						</Button>
+					</div>
 				</Field>
 				<div>
 					<Button type="submit" variant="primary" disabled={busy || !email.trim() || !password}>

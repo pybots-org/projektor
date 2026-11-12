@@ -213,5 +213,137 @@ describe("GroupManager tabs", () => {
 				workspaceSlug: "my-ws",
 			});
 		});
+
+		const copyBtn = await screen.findByRole("button", { name: "Copy login info" });
+		expect(screen.getByText(/Password: StrongPassword1!/)).toBeTruthy();
+
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(navigator, "clipboard", {
+			value: { writeText },
+			configurable: true,
+		});
+
+		fireEvent.click(copyBtn);
+		await vi.waitFor(() => {
+			expect(writeText).toHaveBeenCalledTimes(1);
+		});
+		expect(writeText.mock.calls[0]?.[0]).toContain("Email: new@example.com");
+		expect(writeText.mock.calls[0]?.[0]).toContain("Password: StrongPassword1!");
+		expect(writeText.mock.calls[0]?.[0]).toContain("/login");
+		expect(await screen.findByRole("button", { name: "Copied!" })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+		expect(screen.queryByRole("button", { name: "Copied!" })).toBeNull();
+	});
+
+	it("generates a strong password and shows copyable login info after password reset", async () => {
+		const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+			const u = String(url);
+			const json = (body: unknown) =>
+				Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+			if (u.includes("/auth/users") && init?.method === "POST") {
+				return json({
+					user: { id: "u2", email: "mo@example.com", name: "Mo Member", role: "member" },
+					created: false,
+					passwordSet: true,
+				});
+			}
+			if (u.includes("/auth/users")) {
+				return json({ users: [{ ...REGULAR_MEMBER, hasPassword: true }] });
+			}
+			if (u.includes("/member-groups")) return json([]);
+			if (u.includes("/groups")) return json([GROUP]);
+			if (u.includes("/api/projects")) return json([]);
+			return json({ members: [REGULAR_MEMBER], currentUserRole: "owner" });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<GroupManager workspaceSlug="my-ws" />);
+		await screen.findAllByText("Engineering");
+		fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+		const addInput = (await screen.findByLabelText(/^Initial password/i)) as HTMLInputElement;
+		fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+		expect(addInput.value.length).toBeGreaterThanOrEqual(8);
+
+		const resetButtons = await screen.findAllByRole("button", { name: /^Reset$/ });
+		fireEvent.click(resetButtons[0]);
+		const resetInput = (await screen.findByLabelText(
+			/New password for mo@example\.com/i
+		)) as HTMLInputElement;
+		const genButtons = screen.getAllByRole("button", { name: "Generate" });
+		fireEvent.click(genButtons[genButtons.length - 1]);
+		expect(resetInput.value.length).toBeGreaterThanOrEqual(8);
+		const generatedPw = resetInput.value;
+
+		fireEvent.click(screen.getByRole("button", { name: "Save password" }));
+		expect(await screen.findByRole("button", { name: "Copy login info" })).toBeTruthy();
+		expect(
+			screen.getByText(
+				new RegExp(`Password: ${generatedPw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+			)
+		).toBeTruthy();
+	});
+
+	it("lets owners change member roles, disables sole-owner demotion, and keeps roles read-only for admins", async () => {
+		const OWNER = { id: "u1", email: "owner@example.com", name: "Olivia Owner", role: "owner" };
+		let currentMembers = [OWNER, REGULAR_MEMBER];
+		const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+			const u = String(url);
+			const json = (body: unknown) =>
+				Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+			if (u.includes("/members/u2") && init?.method === "PATCH") {
+				const parsed = JSON.parse(String(init.body)) as { role: string };
+				currentMembers = currentMembers.map((m) =>
+					m.id === "u2" ? { ...m, role: parsed.role } : m
+				);
+				return json({ ok: true });
+			}
+			if (u.includes("/member-groups")) return json([]);
+			if (u.includes("/groups")) return json([GROUP]);
+			if (u.includes("/api/projects")) return json([]);
+			return json({ members: currentMembers, currentUserRole: "owner", currentUserId: "u1" });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<GroupManager workspaceSlug="my-ws" />);
+		await screen.findAllByText("Engineering");
+		fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+		const ownerSelects = (await screen.findAllByLabelText(
+			"Workspace role for Olivia Owner"
+		)) as HTMLSelectElement[];
+		expect(ownerSelects[0].disabled).toBe(true);
+
+		const memberSelects = screen.getAllByLabelText(
+			"Workspace role for Mo Member"
+		) as HTMLSelectElement[];
+		expect(memberSelects[0].disabled).toBe(false);
+		expect(memberSelects[0].value).toBe("member");
+
+		fireEvent.change(memberSelects[0], { target: { value: "admin" } });
+		await vi.waitFor(() => {
+			const patchCall = fetchMock.mock.calls.find(
+				([u, init]) =>
+					String(u).includes("/api/workspaces/my-ws/members/u2") &&
+					(init as RequestInit | undefined)?.method === "PATCH"
+			);
+			expect(patchCall).toBeTruthy();
+			expect(JSON.parse(String((patchCall?.[1] as RequestInit | undefined)?.body))).toEqual({
+				role: "admin",
+			});
+		});
+
+		expect(await screen.findByText("Updated role for mo@example.com to admin.")).toBeTruthy();
+	});
+
+	it("renders read-only roles when caller is an admin instead of an owner", async () => {
+		mockFetchForTabs({ role: "admin" });
+		render(<GroupManager workspaceSlug="my-ws" />);
+		await screen.findAllByText("Engineering");
+		fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+
+		await screen.findAllByText("Mo Member");
+		expect(screen.queryByLabelText("Workspace role for Mo Member")).toBeNull();
 	});
 });

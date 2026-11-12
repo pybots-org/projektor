@@ -96,7 +96,7 @@ export async function getWorkspaceWithMembers(
 		.innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
 		.where(eq(schema.workspaceMembers.workspaceId, ctx.workspaceId))
 		.orderBy(asc(schema.workspaceMembers.joinedAt));
-	return { ...workspace, members, currentUserRole: ctx.role };
+	return { ...workspace, members, currentUserRole: ctx.role, currentUserId: ctx.userId };
 }
 
 export async function updateWorkspace(ctx: ServiceCtx, input: unknown) {
@@ -199,6 +199,36 @@ export async function updateMemberRole(ctx: ServiceCtx, targetUserId: string, in
 	const parsed = UpdateRoleSchema.safeParse(input);
 	if (!parsed.success) throw new ValidationError(parsed.error.flatten());
 	const orm = drizzle(ctx.db, { schema });
+	const existing = await orm
+		.select({ role: schema.workspaceMembers.role })
+		.from(schema.workspaceMembers)
+		.where(
+			and(
+				eq(schema.workspaceMembers.workspaceId, ctx.workspaceId),
+				eq(schema.workspaceMembers.userId, targetUserId)
+			)
+		)
+		.get();
+	if (!existing) throw new NotFoundError("Member not found");
+
+	if (existing.role === "owner" && parsed.data.role !== "owner") {
+		const owners = await orm
+			.select({ userId: schema.workspaceMembers.userId })
+			.from(schema.workspaceMembers)
+			.where(
+				and(
+					eq(schema.workspaceMembers.workspaceId, ctx.workspaceId),
+					eq(schema.workspaceMembers.role, "owner")
+				)
+			);
+		if (owners.length <= 1) {
+			throw new ValidationError({
+				formErrors: ["Workspace must have at least one owner"],
+				fieldErrors: {},
+			});
+		}
+	}
+
 	await orm
 		.update(schema.workspaceMembers)
 		.set({ role: parsed.data.role })

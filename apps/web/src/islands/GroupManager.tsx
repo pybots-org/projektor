@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { apiFetch } from "../utils/api-client";
 import { resolveWorkspaceSlug } from "../utils/workspace";
 import type { ProjectLookup as ProjectLite } from "./board-utils";
-import { AddMemberPasswordPanel, useMemberPasswords } from "./MemberPasswordSection";
+import {
+	AddMemberPasswordPanel,
+	generateStrongPassword,
+	SavedCredentialsBanner,
+	useMemberPasswords,
+} from "./MemberPasswordSection";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { EmptyState } from "./ui/EmptyState";
@@ -54,6 +59,7 @@ interface Props {
 }
 
 const GRANT_ROLES: GrantRole[] = ["viewer", "member", "admin"];
+const WORKSPACE_ROLES = ["owner", "admin", "member", "viewer"] as const;
 
 const INPUT =
 	"px-[0.625rem] py-[0.4rem] border border-border rounded text-[0.85rem] bg-bg text-text-base " +
@@ -93,15 +99,17 @@ interface Loaded {
 	memberGroups: MemberGroupsRow[];
 	projects: ProjectLite[];
 	role: string;
+	currentUserId?: string;
 	isAdmin: boolean;
 }
 
 async function loadAll(slug: string): Promise<Loaded> {
 	const [groups, ws, projects] = await Promise.all([
 		apiFetch<GroupSummary[]>(`/api/workspaces/${slug}/groups`, { workspaceSlug: slug }),
-		apiFetch<{ members: WsMember[]; currentUserRole: string }>(`/api/workspaces/${slug}`, {
-			workspaceSlug: slug,
-		}),
+		apiFetch<{ members: WsMember[]; currentUserRole: string; currentUserId?: string }>(
+			`/api/workspaces/${slug}`,
+			{ workspaceSlug: slug }
+		),
 		apiFetch<ProjectLite[]>("/api/projects", { workspaceSlug: slug }),
 	]);
 	const role = ws.currentUserRole;
@@ -113,7 +121,15 @@ async function loadAll(slug: string): Promise<Loaded> {
 				workspaceSlug: slug,
 			})
 		: [];
-	return { groups, members: ws.members ?? [], memberGroups, projects, role, isAdmin };
+	return {
+		groups,
+		members: ws.members ?? [],
+		memberGroups,
+		projects,
+		role,
+		currentUserId: ws.currentUserId,
+		isAdmin,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -259,13 +275,52 @@ function MemberGroupsCell(
 	);
 }
 
+function MemberRoleControl(
+	props: Readonly<{
+		member: WsMember;
+		callerRole: string;
+		ownerCount: number;
+		busy: boolean;
+		onChangeRole: (member: WsMember, nextRole: string) => Promise<void>;
+	}>
+) {
+	if (props.callerRole !== "owner") {
+		return <span>{props.member.role}</span>;
+	}
+	const isSoleOwner = props.member.role === "owner" && props.ownerCount <= 1;
+	return (
+		<select
+			aria-label={`Workspace role for ${props.member.name || props.member.email}`}
+			class={INPUT}
+			value={props.member.role}
+			disabled={props.busy || isSoleOwner}
+			title={isSoleOwner ? "Workspace must have at least one owner" : undefined}
+			onChange={(e) => {
+				const nextRole = (e.target as HTMLSelectElement).value;
+				if (nextRole && nextRole !== props.member.role) {
+					void props.onChangeRole(props.member, nextRole);
+				}
+			}}
+		>
+			{WORKSPACE_ROLES.map((r) => (
+				<option key={r} value={r}>
+					{r}
+				</option>
+			))}
+		</select>
+	);
+}
+
 function MembersMobileCards(
 	props: Readonly<{
 		members: WsMember[];
 		groupsByUser: Map<string, Array<{ id: string; name: string }>>;
 		callerRole: string;
+		ownerCount: number;
 		passwordByUser: Record<string, boolean>;
 		busy: boolean;
+		busyRoleUserId: string | null;
+		onChangeRole: (member: WsMember, nextRole: string) => Promise<void>;
 		onOpenReset: (id: string, email: string) => void;
 	}>
 ) {
@@ -277,7 +332,16 @@ function MembersMobileCards(
 					<div key={m.id} class="py-3 px-4 border border-border rounded-md bg-surface">
 						<div class="font-medium text-text-base">{m.name || m.email}</div>
 						<div class="text-[0.75rem] text-text-muted mb-1">{m.email}</div>
-						<div class="text-[0.75rem] text-text-muted mb-2">Role: {m.role}</div>
+						<div class="text-[0.75rem] text-text-muted mb-2 flex items-center gap-2">
+							<span>Role:</span>
+							<MemberRoleControl
+								member={m}
+								callerRole={props.callerRole}
+								ownerCount={props.ownerCount}
+								busy={props.busyRoleUserId === m.id}
+								onChangeRole={props.onChangeRole}
+							/>
+						</div>
 						<div class="mb-2">
 							<MemberGroupsCell member={m} groups={props.groupsByUser.get(m.id) ?? []} />
 						</div>
@@ -298,6 +362,33 @@ function MembersMobileCards(
 	);
 }
 
+function useMemberRoleAction(slug: string, onChanged: () => Promise<void>) {
+	const [busyUserId, setBusyUserId] = useState<string | null>(null);
+	const [roleErr, setRoleErr] = useState<string | null>(null);
+	const [roleNotice, setRoleNotice] = useState<string | null>(null);
+
+	async function changeRole(member: WsMember, nextRole: string) {
+		setRoleErr(null);
+		setRoleNotice(null);
+		setBusyUserId(member.id);
+		try {
+			await apiFetch(`/api/workspaces/${slug}/members/${member.id}`, {
+				method: "PATCH",
+				workspaceSlug: slug,
+				body: { role: nextRole },
+			});
+			await onChanged();
+			setRoleNotice(`Updated role for ${member.email} to ${nextRole}.`);
+		} catch (e) {
+			setRoleErr(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusyUserId(null);
+		}
+	}
+
+	return { busyUserId, roleErr, roleNotice, changeRole };
+}
+
 function MembersOverview(
 	props: Readonly<{
 		slug: string;
@@ -309,6 +400,10 @@ function MembersOverview(
 ) {
 	const groupsByUser = new Map(props.memberGroups.map((r) => [r.userId, r.groups]));
 	const pw = useMemberPasswords(props.slug, props.onChanged);
+	const roleAction = useMemberRoleAction(props.slug, props.onChanged);
+	const [revealResetPw, setRevealResetPw] = useState(false);
+	const ownerCount = props.members.filter((m) => m.role === "owner").length;
+
 	return (
 		<section class={CARD}>
 			<h2 class={H2}>Members</h2>
@@ -317,19 +412,29 @@ function MembersOverview(
 				busy={pw.busy}
 				onCreate={pw.createUser}
 			/>
-			{pw.err && (
+			{pw.savedCredentials && (
+				<SavedCredentialsBanner
+					key={pw.savedCredentials.id}
+					credentials={pw.savedCredentials}
+					onDismiss={pw.dismissCredentials}
+				/>
+			)}
+			{(pw.err || roleAction.roleErr) && (
 				<p role="alert" class="m-0 mb-3 text-xs text-danger-text">
-					{pw.err}
+					{pw.err || roleAction.roleErr}
 				</p>
 			)}
-			{pw.notice && (
+			{(pw.notice || roleAction.roleNotice) && (
 				<p role="status" class="m-0 mb-3 text-xs text-text-base">
-					{pw.notice}
+					{pw.notice || roleAction.roleNotice}
 				</p>
 			)}
 			{pw.resetTargetId && (
 				<form
-					onSubmit={pw.saveReset}
+					onSubmit={(e) => {
+						setRevealResetPw(false);
+						return pw.saveReset(e);
+					}}
 					class="mb-4 p-3 border border-border rounded bg-bg flex flex-wrap items-end gap-2"
 				>
 					<div class="flex-1 min-w-[200px]">
@@ -339,15 +444,30 @@ function MembersOverview(
 						>
 							New password for {pw.resetEmail}
 						</label>
-						<Input
-							id="reset-member-pw"
-							type="password"
-							required
-							placeholder="Min 8 characters"
-							value={pw.resetPw}
-							onInput={(e) => pw.setResetPw((e.target as HTMLInputElement).value)}
-							disabled={pw.busy}
-						/>
+						<div class="flex items-center gap-1.5">
+							<Input
+								id="reset-member-pw"
+								class="flex-1 min-w-0"
+								type={revealResetPw ? "text" : "password"}
+								required
+								placeholder="Min 8 characters"
+								value={pw.resetPw}
+								onInput={(e) => pw.setResetPw((e.target as HTMLInputElement).value)}
+								disabled={pw.busy}
+							/>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={pw.busy}
+								onClick={() => {
+									pw.setResetPw(generateStrongPassword());
+									setRevealResetPw(true);
+								}}
+							>
+								Generate
+							</Button>
+						</div>
 					</div>
 					<Button type="submit" variant="primary" size="sm" disabled={pw.busy || !pw.resetPw}>
 						Save password
@@ -356,7 +476,10 @@ function MembersOverview(
 						type="button"
 						variant="outline"
 						size="sm"
-						onClick={pw.closeReset}
+						onClick={() => {
+							setRevealResetPw(false);
+							pw.closeReset();
+						}}
 						disabled={pw.busy}
 					>
 						Cancel
@@ -383,7 +506,15 @@ function MembersOverview(
 										<div class="font-medium text-text-base">{m.name || m.email}</div>
 										<div class="text-[0.75rem] text-text-muted">{m.email}</div>
 									</TableCell>
-									<TableCell>{m.role}</TableCell>
+									<TableCell>
+										<MemberRoleControl
+											member={m}
+											callerRole={props.callerRole}
+											ownerCount={ownerCount}
+											busy={roleAction.busyUserId === m.id}
+											onChangeRole={roleAction.changeRole}
+										/>
+									</TableCell>
 									<TableCell>
 										<MemberGroupsCell member={m} groups={groupsByUser.get(m.id) ?? []} />
 									</TableCell>
@@ -397,7 +528,10 @@ function MembersOverview(
 													variant="outline"
 													size="sm"
 													disabled={pw.busy}
-													onClick={() => pw.openReset(m.id, m.email)}
+													onClick={() => {
+														setRevealResetPw(false);
+														pw.openReset(m.id, m.email);
+													}}
 												>
 													{hasPw ? "Reset" : "Set password"}
 												</Button>
@@ -414,9 +548,15 @@ function MembersOverview(
 				members={props.members}
 				groupsByUser={groupsByUser}
 				callerRole={props.callerRole}
+				ownerCount={ownerCount}
 				passwordByUser={pw.passwordByUser}
 				busy={pw.busy}
-				onOpenReset={pw.openReset}
+				busyRoleUserId={roleAction.busyUserId}
+				onChangeRole={roleAction.changeRole}
+				onOpenReset={(id, email) => {
+					setRevealResetPw(false);
+					pw.openReset(id, email);
+				}}
 			/>
 		</section>
 	);
@@ -1073,7 +1213,7 @@ interface GuardProps {
 
 function GroupManagerGuard({ slug, loading, forbidden, error, data, children }: GuardProps) {
 	if (!slug) return <div class={CARD}>No workspace configured.</div>;
-	if (loading) return <div class={CARD}>Loading…</div>;
+	if (loading && !data) return <div class={CARD}>Loading…</div>;
 	if (forbidden) return <div class={CARD}>Only workspace owners and admins can manage groups.</div>;
 	if (error) return <div class={CARD}>Error: {error}</div>;
 	if (!data) return null;

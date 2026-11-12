@@ -463,6 +463,70 @@ describe("Member role changes are owner-only", () => {
 			expect(res.status).toBe(403);
 		}
 	});
+
+	it("owner can change a member's role and changes persist", async () => {
+		const fixture = await seedFixture({ role: "owner" });
+		const memberUser = await seedUser(`m-upd-${crypto.randomUUID().slice(0, 8)}@example.com`);
+		await seedMember(fixture.workspace.id, memberUser.id, "member");
+		const headers = authHeaders(fixture.token, fixture.workspace.slug);
+		const url = `http://localhost/api/workspaces/${fixture.workspace.slug}/members/${memberUser.id}`;
+
+		for (const nextRole of ["admin", "viewer", "owner"] as const) {
+			const res = await SELF.fetch(url, {
+				method: "PATCH",
+				headers,
+				body: JSON.stringify({ role: nextRole }),
+			});
+			expect(res.status).toBe(200);
+		}
+
+		const wsRes = await SELF.fetch(`http://localhost/api/workspaces/${fixture.workspace.slug}`, {
+			headers,
+		});
+		const wsBody = (await wsRes.json()) as {
+			currentUserId: string;
+			members: Array<{ id: string; role: string }>;
+		};
+		expect(wsBody.currentUserId).toBe(fixture.user.id);
+		expect(wsBody.members.find((m) => m.id === memberUser.id)?.role).toBe("owner");
+	});
+
+	it("rejects demoting the sole remaining owner, but allows demotion when another owner exists", async () => {
+		const fixture = await seedFixture({ role: "owner" });
+		const headers = authHeaders(fixture.token, fixture.workspace.slug);
+		const selfUrl = `http://localhost/api/workspaces/${fixture.workspace.slug}/members/${fixture.user.id}`;
+
+		const soleRes = await SELF.fetch(selfUrl, {
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ role: "admin" }),
+		});
+		expect(soleRes.status).toBe(400);
+
+		const coOwner = await seedUser(`m-coowner-${crypto.randomUUID().slice(0, 8)}@example.com`);
+		await seedMember(fixture.workspace.id, coOwner.id, "owner");
+
+		const okRes = await SELF.fetch(selfUrl, {
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ role: "admin" }),
+		});
+		expect(okRes.status).toBe(200);
+	});
+
+	it("returns 404 when target user is not a member of the workspace", async () => {
+		const fixture = await seedFixture({ role: "owner" });
+		const outsider = await seedUser(`m-outsider-${crypto.randomUUID().slice(0, 8)}@example.com`);
+		const res = await SELF.fetch(
+			`http://localhost/api/workspaces/${fixture.workspace.slug}/members/${outsider.id}`,
+			{
+				method: "PATCH",
+				headers: authHeaders(fixture.token, fixture.workspace.slug),
+				body: JSON.stringify({ role: "admin" }),
+			}
+		);
+		expect(res.status).toBe(404);
+	});
 });
 
 describe("GET /api/workspaces/:slug (currentUserRole)", () => {
