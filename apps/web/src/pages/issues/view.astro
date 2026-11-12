@@ -38,12 +38,18 @@ const workspaceSlug = import.meta.env.PUBLIC_WORKSPACE_SLUG as string | undefine
           new URLSearchParams(location.search).get('id') ||
           (pretty ? pretty[1] + '-' + pretty[2] : null);
         if (!key) return;
+        var host = location.hostname;
+        var resolvedSlug =
+          workspaceSlug ||
+          (host === 'localhost' || /^[\d.]+$/.test(host) || host.split('.').length < 2
+            ? ''
+            : host.split('.')[0]);
         window.__projektorIssuePrefetch = {
           key: key,
           t: Date.now(),
           response: fetch('/api/issues/' + encodeURIComponent(key), {
             credentials: 'include',
-            headers: workspaceSlug ? { 'X-Workspace-Slug': workspaceSlug } : {},
+            headers: resolvedSlug ? { 'X-Workspace-Slug': resolvedSlug } : {},
           }).catch(function () {
             return null;
           }),

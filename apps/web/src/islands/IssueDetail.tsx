@@ -4,6 +4,7 @@ import { ApiError, apiFetch } from "../utils/api-client";
 import { claimPrefetchedIssue } from "../utils/issue-prefetch";
 import { issueUrl } from "../utils/issue-url";
 import { fetchAllIssues } from "../utils/paginate";
+import { resolveWorkspaceSlug } from "../utils/workspace";
 import {
 	AttachmentsSection,
 	BodySection,
@@ -303,10 +304,11 @@ function useIssueCore({
 			}
 		})();
 		(async () => {
-			if (!workspaceSlug) return;
+			const resolvedSlug = resolveWorkspaceSlug(workspaceSlug);
+			if (!resolvedSlug) return;
 			try {
-				const data = await apiFetch<{ members: Member[] }>(`/api/workspaces/${workspaceSlug}`, {
-					workspaceSlug,
+				const data = await apiFetch<{ members: Member[] }>(`/api/workspaces/${resolvedSlug}`, {
+					workspaceSlug: resolvedSlug,
 				});
 				if (Array.isArray(data?.members)) setMembers(data.members);
 			} catch {

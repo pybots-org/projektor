@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useAccessGate } from "../utils/access-gate";
-import { apiFetch, SessionExpiredError } from "../utils/api-client";
+import { ApiError, apiFetch, SessionExpiredError } from "../utils/api-client";
 import { usePublicViewer } from "../utils/public-viewer";
+import { resolveWorkspaceSlug } from "../utils/workspace";
 import AccessPending from "./AccessPending";
 import { SignInPrompt } from "./SignInPrompt";
 import { Button } from "./ui/Button";
@@ -202,7 +203,7 @@ function useProjectCreateForm(workspaceSlug: string | undefined, onCreated: (p: 
 				archived_at: null,
 				workspace_id: "",
 				workspace_name: "",
-				workspace_slug: workspaceSlug ?? "",
+				workspace_slug: resolveWorkspaceSlug(workspaceSlug),
 				open_issue_count: 0,
 				backlog_issue_count: 0,
 				created_at: Math.floor(Date.now() / 1000),
@@ -210,7 +211,9 @@ function useProjectCreateForm(workspaceSlug: string | undefined, onCreated: (p: 
 			});
 			close();
 		} catch (err) {
-			setFormError(String(err));
+			setFormError(
+				err instanceof ApiError && err.detail !== String(err.status) ? err.detail : String(err)
+			);
 		} finally {
 			setSubmitting(false);
 		}

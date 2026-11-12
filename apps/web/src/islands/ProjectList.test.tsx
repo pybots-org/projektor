@@ -127,4 +127,78 @@ describe("ProjectList — public read-only demo viewer (PROJ-568)", () => {
 		expect(await screen.findByText("+ New project")).toBeTruthy();
 		expect(screen.queryByText(/Read-only demo/i)).toBeNull();
 	});
+
+	it("sends resolved X-Workspace-Slug header when creating a project without baked workspaceSlug", async () => {
+		vi.stubGlobal("location", { hostname: "projektor.blufoxmobile.workers.dev" } as Location);
+		const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+			if (String(url).includes("/auth/me")) {
+				return Promise.resolve({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							user: { id: "u1", email: "real-user@example.com", name: "User" },
+							workspaces: [{ id: "w1", slug: "projektor", role: "owner" }],
+						}),
+				});
+			}
+			if (init?.method === "POST") {
+				return Promise.resolve({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							id: "p-new",
+							name: "Blufox Mobile Dashboard",
+							key: "BLUFOXDASH",
+							slug: "blufox-mobile-dashboard",
+						}),
+				});
+			}
+			return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<ProjectList />);
+		fireEvent.click(await screen.findByText("+ New project"));
+		fireEvent.input(screen.getByPlaceholderText("My Project"), {
+			target: { value: "Blufox Mobile Dashboard" },
+		});
+		fireEvent.input(screen.getByPlaceholderText("MYPROJ"), {
+			target: { value: "BLUFOXDASH" },
+		});
+		fireEvent.click(screen.getByText("Create project"));
+
+		expect(await screen.findByText("Blufox Mobile Dashboard")).toBeTruthy();
+		const postCall = fetchMock.mock.calls.find(
+			([url, init]) => url === "/api/projects" && (init as RequestInit)?.method === "POST"
+		);
+		expect(postCall).toBeDefined();
+		const headers = ((postCall?.[1] as RequestInit)?.headers as Record<string, string>) ?? {};
+		expect(headers["X-Workspace-Slug"]).toBe("projektor");
+	});
+
+	it("displays the API error detail when project creation fails", async () => {
+		const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+			if (init?.method === "POST") {
+				return Promise.resolve({
+					ok: false,
+					status: 400,
+					json: () => Promise.resolve({ error: "Project key is already in use" }),
+				});
+			}
+			return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<ProjectList workspaceSlug="projektor" />);
+		fireEvent.click(await screen.findByText("+ New project"));
+		fireEvent.input(screen.getByPlaceholderText("My Project"), {
+			target: { value: "Dup" },
+		});
+		fireEvent.input(screen.getByPlaceholderText("MYPROJ"), {
+			target: { value: "DUP" },
+		});
+		fireEvent.click(screen.getByText("Create project"));
+
+		expect(await screen.findByText("Project key is already in use")).toBeTruthy();
+	});
 });

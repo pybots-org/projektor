@@ -1,5 +1,6 @@
 import { relativeTime } from "../islands/issue-detail-helpers";
 import { apiFetch } from "./api-client";
+import { workspaceQueryParam } from "./workspace";
 
 /** Mirrors the API's LinkPreview (services/link-previews.ts). */
 export interface LinkPreview {
@@ -132,8 +133,7 @@ function isHttpUrl(href: string): boolean {
  * X-Workspace-Slug, hence the `workspace` query parameter.
  */
 export function previewImageSrc(preview: LinkPreview, workspaceSlug?: string): string {
-	const ws = workspaceSlug ? `&workspace=${encodeURIComponent(workspaceSlug)}` : "";
-	return `/api/link-preview/image?url=${encodeURIComponent(preview.url)}${ws}`;
+	return `/api/link-preview/image?url=${encodeURIComponent(preview.url)}${workspaceQueryParam(workspaceSlug, "&")}`;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(

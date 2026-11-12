@@ -15,6 +15,7 @@ import {
 	stripLeadingTitle,
 } from "../utils/markdown";
 import { usePublicViewer } from "../utils/public-viewer";
+import { workspaceQueryParam } from "../utils/workspace";
 import AccessPending from "./AccessPending";
 import type { ProjectLookup as ProjectOption } from "./board-utils";
 import MarkdownEditor from "./LazyMarkdownEditor";
@@ -1623,7 +1624,7 @@ function AttachmentEntry({
 	onDelete: (attachmentId: string) => void;
 	isPublicViewer: boolean;
 }) {
-	const qs = workspaceSlug ? `?workspace=${workspaceSlug}` : "";
+	const qs = workspaceQueryParam(workspaceSlug);
 	return (
 		<div class="flex items-center gap-3 px-3 py-2 border border-border rounded-md bg-surface">
 			<a
@@ -2852,7 +2853,7 @@ function useWikiAttachments(workspaceSlug: string | undefined, page: WikiPageDat
 				body: form,
 			});
 			await fetchAttachments(page.id);
-			const qs = workspaceSlug ? `?workspace=${encodeURIComponent(workspaceSlug)}` : "";
+			const qs = workspaceQueryParam(workspaceSlug);
 			return `/api/files/${result.id}${qs}`;
 		} catch {
 			return null;

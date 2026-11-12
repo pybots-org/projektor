@@ -428,3 +428,62 @@ describe("apiFetch — in-flight GET dedupe (PROJ-443)", () => {
 		});
 	});
 });
+
+describe("apiFetch — runtime workspace slug resolution", () => {
+	beforeEach(() => {
+		sessionStorage.clear();
+		__resetApiFetchStateForTests();
+	});
+
+	it("attaches X-Workspace-Slug from hostname subdomain when workspaceSlug prop is omitted", async () => {
+		vi.stubGlobal("location", { hostname: "projektor.blufoxmobile.workers.dev" } as Location);
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue({ ok: true, json: () => Promise.resolve({ id: "p1" }) });
+		vi.stubGlobal("fetch", fetchMock);
+
+		await apiFetch("/api/projects", { method: "POST", body: { name: "Test", key: "TST" } });
+
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect((init.headers as Record<string, string>)["X-Workspace-Slug"]).toBe("projektor");
+	});
+
+	it("discovers workspace slug from /auth/me for subsequent requests on non-matching hostnames", async () => {
+		vi.stubGlobal("location", { hostname: "pm.blufoxmobile.com" } as Location);
+		const fetchMock = vi.fn().mockImplementation((url: string) => {
+			if (String(url) === "/auth/me") {
+				return Promise.resolve({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							user: { id: "u1", email: "a@b.com", name: "A" },
+							workspaces: [{ id: "w1", slug: "projektor", role: "owner" }],
+						}),
+				});
+			}
+			return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: "p1" }) });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await apiFetch("/auth/me");
+		await apiFetch("/api/projects", { method: "POST", body: { name: "Test", key: "TST" } });
+
+		const [, postInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+		expect((postInit.headers as Record<string, string>)["X-Workspace-Slug"]).toBe("projektor");
+	});
+
+	it("shares in-flight GETs across explicit resolved slug and omitted slug on subdomain hosts", async () => {
+		vi.stubGlobal("location", { hostname: "projektor.blufoxmobile.workers.dev" } as Location);
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue({ ok: true, json: () => Promise.resolve({ user: { id: "u1" } }) });
+		vi.stubGlobal("fetch", fetchMock);
+
+		await Promise.all([
+			apiFetch("/auth/me", { workspaceSlug: "projektor", on401: "throw" }),
+			apiFetch("/auth/me", { on401: "throw" }),
+		]);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});

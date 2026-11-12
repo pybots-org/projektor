@@ -1,9 +1,16 @@
+import {
+	resetKnownWorkspaceSlugs,
+	resolveWorkspaceSlug,
+	setKnownWorkspaceSlugs,
+} from "./workspace";
+
 function buildHeaders(
 	workspaceSlug: string | undefined,
 	extra: Record<string, string> = {}
 ): Record<string, string> {
 	const h: Record<string, string> = { ...extra };
-	if (workspaceSlug) h["X-Workspace-Slug"] = workspaceSlug;
+	const resolved = resolveWorkspaceSlug(workspaceSlug);
+	if (resolved) h["X-Workspace-Slug"] = resolved;
 	return h;
 }
 
@@ -98,6 +105,7 @@ export function __resetApiFetchStateForTests(): void {
 	reauthReloadInFlight = false;
 	reauthAttemptedAt = readReauthMarker();
 	inFlightGets.clear();
+	resetKnownWorkspaceSlugs();
 }
 
 type ApiFetchOpts = {
@@ -138,7 +146,7 @@ function dedupeKeyFor(path: string, method: string, opts: ApiFetchOpts): string 
 		opts.body === undefined &&
 		opts.headers === undefined &&
 		(path.startsWith("/api/") || path.startsWith("/auth/"));
-	return dedupeable ? `${path}\x00${opts.workspaceSlug ?? ""}` : null;
+	return dedupeable ? `${path}\x00${resolveWorkspaceSlug(opts.workspaceSlug)}` : null;
 }
 
 function clearInFlightEntry(dedupeKey: string, promise: Promise<unknown>): void {
@@ -200,6 +208,20 @@ async function describeApiError(res: Response): Promise<string> {
 	return String(res.status);
 }
 
+function recordWorkspacesIfMe(path: string, data: unknown): void {
+	if (path.split("?")[0] !== "/auth/me" || !data || typeof data !== "object") return;
+	const raw = (data as { workspaces?: unknown }).workspaces;
+	if (!Array.isArray(raw)) return;
+	const slugs = raw
+		.map((w) =>
+			w && typeof w === "object" && typeof (w as { slug?: unknown }).slug === "string"
+				? (w as { slug: string }).slug
+				: ""
+		)
+		.filter(Boolean);
+	if (slugs.length > 0) setKnownWorkspaceSlugs(slugs);
+}
+
 async function apiFetchUncached<T>(
 	path: string,
 	opts: ApiFetchOpts,
@@ -229,7 +251,9 @@ async function apiFetchUncached<T>(
 	// and make a successful DELETE look like a failure to the caller.
 	if (res.status === 204 || res.status === 205) return undefined as T;
 	if (res.headers?.get?.("content-length") === "0") return undefined as T;
-	return res.json() as Promise<T>;
+	const data = (await res.json()) as T;
+	recordWorkspacesIfMe(path, data);
+	return data;
 }
 
 /** Response of `POST /api/wiki/trash/:id/undelete` (wikiService.undeleteWikiPage). */

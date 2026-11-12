@@ -7,6 +7,7 @@ import { issueUrl } from "../utils/issue-url";
 import { PRIORITY_OPTIONS } from "../utils/issue-utils";
 import { hydrateLinkCards } from "../utils/link-cards";
 import { renderMd, renderMermaidDiagrams } from "../utils/markdown";
+import { workspaceQueryParam } from "../utils/workspace";
 import { categoryColor } from "./board-utils";
 import type {
 	Attachment,
@@ -963,7 +964,7 @@ function AttachmentRow({
 	workspaceSlug?: string;
 	onDelete: () => void;
 }) {
-	const qs = workspaceSlug ? `?workspace=${workspaceSlug}` : "";
+	const qs = workspaceQueryParam(workspaceSlug);
 	const { icon, href, label, meta, external } = resolveAttachmentDisplay(attachment, qs);
 
 	return (
